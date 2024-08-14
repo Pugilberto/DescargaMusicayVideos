@@ -1,151 +1,112 @@
 import streamlit as st
-import pandas as pd
-import math
-from pathlib import Path
+from pytube import YouTube, Playlist
+import os
+from moviepy.editor import VideoFileClip
+import time
+from pytube.innertube import _default_clients
+from pytube import cipher
+import re
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Ajustes de pytube para evitar problemas con la versión de cliente
+_default_clients["ANDROID"]["context"]["client"]["clientVersion"] = "19.08.35"
+_default_clients["IOS"]["context"]["client"]["clientVersion"] = "19.08.35"
+_default_clients["ANDROID_EMBED"]["context"]["client"]["clientVersion"] = "19.08.35"
+_default_clients["IOS_EMBED"]["context"]["client"]["clientVersion"] = "19.08.35"
+_default_clients["IOS_MUSIC"]["context"]["client"]["clientVersion"] = "6.41"
+_default_clients["ANDROID_MUSIC"] = _default_clients["ANDROID_CREATOR"]
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
+def get_throttling_function_name(js: str) -> str:
+    function_patterns = [
+        r'a\.[a-zA-Z]\s*&&\s*\([a-z]\s*=\s*a\.get\("n"\)\)\s*&&\s*'
+        r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])?\([a-z]\)',
+        r'\([a-z]\s*=\s*([a-zA-Z0-9$]+)(\[\d+\])\([a-z]\)',
+    ]
+    for pattern in function_patterns:
+        regex = re.compile(pattern)
+        function_match = regex.search(js)
+        if function_match:
+            if len(function_match.groups()) == 1:
+                return function_match.group(1)
+            idx = function_match.group(2)
+            if idx:
+                idx = idx.strip("[]")
+                array = re.search(
+                    r'var {nfunc}\s*=\s*(\[.+?\]);'.format(
+                        nfunc=re.escape(function_match.group(1))),
+                    js
+                )
+                if array:
+                    array = array.group(1).strip("[]").split(",")
+                    array = [x.strip() for x in array]
+                    return array[int(idx)]
+    raise Exception(
+        caller="get_throttling_function_name", pattern="multiple"
     )
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+cipher.get_throttling_function_name = get_throttling_function_name
 
-    return gdp_df
+def ListaDeReproduccion(link, Comenzar):
+    CancionActual = Comenzar
+    yt = Playlist(link)
+    st.write(f'Descargando: {yt.title}')
+    for i, video in enumerate(yt.videos):
+        if i >= CancionActual:
+            try:
+                st.write(f"Name: {video.title} No. canción: {i}")
+                Descarga = video.streams.filter(progressive=True, file_extension="mp4").first()
+                downloaded_file = Descarga.download()
+                base, ext = os.path.splitext(downloaded_file)
+                mp3_file = base + ".mp3"
+                video_clip = VideoFileClip(base + ".mp4")
+                video_clip.audio.write_audiofile(mp3_file)
+                video_clip.close()
+                os.remove(base + ".mp4")
+                st.write("Descarga completa")
+                CancionActual = i
+            except Exception as e:
+                st.write(f"Error al descargar la canción No. : {e}")
+                ListaDeReproduccion(link, CancionActual)
 
-gdp_df = get_gdp_data()
+def DescargarVideo(link):
+    yt = YouTube(link)
+    st.write(f"Downloading: {yt.title}")
+    try:
+        yt.streams.filter(progressive=True, file_extension="mp4").first().download()
+        st.write("Descarga completa")
+    except Exception as e:
+        st.write(f"Ocurrió un error: {e}")
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+def DescargarMusica(link):
+    yt = YouTube(link)
+    try:
+        st.write("Comenzando Descarga")
+        video = yt.streams.filter(progressive=True, file_extension="mp4").first()
+        downloaded_file = video.download()
+        base, ext = os.path.splitext(downloaded_file)
+        mp3_file = base + ".mp3"
+        video_clip = VideoFileClip(base + ".mp4")
+        video_clip.audio.write_audiofile(mp3_file)
+        video_clip.close()
+        os.remove(base + ".mp4")
+        st.write("Descarga completa")
+    except Exception as e:
+        st.write(f"Error al descargar la canción No. : {e}")
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+# Interfaz de usuario con Streamlit
+st.title("Descargador de YouTube")
+st.write("Ingrese la URL del video o playlist de YouTube:")
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+link = st.text_input("URL de YouTube")
+opcion = st.radio("¿Qué desea descargar?", ("Video", "Audio", "Playlist"))
 
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
-
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+if st.button("Iniciar descarga"):
+    if link:
+        if opcion == "Video":
+            DescargarVideo(link)
+        elif opcion == "Audio":
+            DescargarMusica(link)
+        elif opcion == "Playlist":
+            R2 = st.number_input("Desde qué canción comenzar (0 para comenzar desde el principio):", min_value=0, value=0)
+            ListaDeReproduccion(link, R2)
+    else:
+        st.write("Por favor, ingrese una URL válida.")
